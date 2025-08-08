@@ -15,9 +15,12 @@ usage() {
     echo "  conv USD EUR 100      # Convert 100 USD to EUR"
     echo "  conv BTC USD 1.5      # Convert 1.5 Bitcoin to USD"
     echo "  conv EUR BTC 50000    # Convert 50000 EUR to Bitcoin"
+    echo "  conv BTC SAT 1        # Convert 1 Bitcoin to satoshis"
+    echo "  conv SAT BTC 50000000 # Convert 50M satoshis to Bitcoin"
+    echo "  conv USD SAT 100      # Convert 100 USD to satoshis"
     echo "  conv GBP JPY 250      # Convert 250 GBP to Japanese Yen"
     echo
-    echo "Supports 200+ currencies including Bitcoin (BTC)"
+    echo "Supports 200+ currencies including Bitcoin (BTC) and satoshis (SAT)"
     echo "Data provided by fawazahmed0/currency-api"
     exit ${1:-1}
 }
@@ -45,28 +48,80 @@ if ! [[ "$AMOUNT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     exit 1
 fi
 
-API_URL="https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${FROM_CURRENCY}.min.json"
-
-response=$(curl -s "$API_URL")
-
-if [[ -z "$response" ]]; then
-    echo "Error: Unable to fetch exchange rates" >&2
-    exit 1
+if [[ "$FROM_CURRENCY" == "sat" ]] && [[ "$TO_CURRENCY" == "btc" ]]; then
+    result=$(echo "$AMOUNT / 100000000" | bc -l)
+elif [[ "$FROM_CURRENCY" == "btc" ]] && [[ "$TO_CURRENCY" == "sat" ]]; then
+    result=$(echo "$AMOUNT * 100000000" | bc -l)
+elif [[ "$FROM_CURRENCY" == "sat" ]]; then
+    btc_amount=$(echo "$AMOUNT / 100000000" | bc -l)
+    API_URL="https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/btc.min.json"
+    response=$(curl -s "$API_URL")
+    
+    if [[ -z "$response" ]]; then
+        echo "Error: Unable to fetch exchange rates" >&2
+        exit 1
+    fi
+    
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Unable to fetch Bitcoin exchange rates" >&2
+        exit 1
+    fi
+    
+    rate=$(echo "$response" | jq -r ".\"btc\".\"${TO_CURRENCY}\"")
+    
+    if [[ "$rate" == "null" ]]; then
+        echo "Error: Currency pair SAT/$2 not supported" >&2
+        exit 1
+    fi
+    
+    result=$(echo "$btc_amount * $rate" | bc -l)
+elif [[ "$TO_CURRENCY" == "sat" ]]; then
+    API_URL="https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${FROM_CURRENCY}.min.json"
+    response=$(curl -s "$API_URL")
+    
+    if [[ -z "$response" ]]; then
+        echo "Error: Unable to fetch exchange rates" >&2
+        exit 1
+    fi
+    
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Currency '$1' not supported" >&2
+        exit 1
+    fi
+    
+    rate=$(echo "$response" | jq -r ".\"${FROM_CURRENCY}\".\"btc\"")
+    
+    if [[ "$rate" == "null" ]]; then
+        echo "Error: Currency pair $1/SAT not supported" >&2
+        exit 1
+    fi
+    
+    btc_result=$(echo "$AMOUNT * $rate" | bc -l)
+    result=$(echo "$btc_result * 100000000" | bc -l)
+else
+    API_URL="https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${FROM_CURRENCY}.min.json"
+    
+    response=$(curl -s "$API_URL")
+    
+    if [[ -z "$response" ]]; then
+        echo "Error: Unable to fetch exchange rates" >&2
+        exit 1
+    fi
+    
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Currency '$1' not supported" >&2
+        exit 1
+    fi
+    
+    rate=$(echo "$response" | jq -r ".\"${FROM_CURRENCY}\".\"${TO_CURRENCY}\"")
+    
+    if [[ "$rate" == "null" ]]; then
+        echo "Error: Currency pair $1/$2 not supported" >&2
+        exit 1
+    fi
+    
+    result=$(echo "$AMOUNT * $rate" | bc -l)
 fi
-
-if ! echo "$response" | jq -e . >/dev/null 2>&1; then
-    echo "Error: Currency '$1' not supported" >&2
-    exit 1
-fi
-
-rate=$(echo "$response" | jq -r ".\"${FROM_CURRENCY}\".\"${TO_CURRENCY}\"")
-
-if [[ "$rate" == "null" ]]; then
-    echo "Error: Currency pair $1/$2 not supported" >&2
-    exit 1
-fi
-
-result=$(echo "$AMOUNT * $rate" | bc -l)
 
 if (( $(echo "$result >= 1" | bc -l) )); then
     printf "%.2f\n" "$result"
