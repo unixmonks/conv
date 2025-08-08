@@ -1,0 +1,75 @@
+#!/bin/bash
+
+VERSION="1.0.0"
+
+set -euo pipefail
+
+usage() {
+    echo "conv v$VERSION - Currency Converter"
+    echo
+    echo "Usage: conv <FROM CURRENCY> <TO CURRENCY> <AMOUNT>"
+    echo "       conv -h|--help"
+    echo "       conv -v|--version"
+    echo
+    echo "Examples:"
+    echo "  conv USD EUR 100      # Convert 100 USD to EUR"
+    echo "  conv BTC USD 1.5      # Convert 1.5 Bitcoin to USD"
+    echo "  conv EUR BTC 50000    # Convert 50000 EUR to Bitcoin"
+    echo "  conv GBP JPY 250      # Convert 250 GBP to Japanese Yen"
+    echo
+    echo "Supports 200+ currencies including Bitcoin (BTC)"
+    echo "Data provided by fawazahmed0/currency-api"
+    exit ${1:-1}
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage 0
+        ;;
+    -v|--version)
+        echo "conv v$VERSION"
+        exit 0
+        ;;
+esac
+
+if [[ $# -ne 3 ]]; then
+    usage
+fi
+
+FROM_CURRENCY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+TO_CURRENCY=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+AMOUNT="$3"
+
+if ! [[ "$AMOUNT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Error: Amount must be a valid number" >&2
+    exit 1
+fi
+
+API_URL="https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${FROM_CURRENCY}.min.json"
+
+response=$(curl -s "$API_URL")
+
+if [[ -z "$response" ]]; then
+    echo "Error: Unable to fetch exchange rates" >&2
+    exit 1
+fi
+
+if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+    echo "Error: Currency '$1' not supported" >&2
+    exit 1
+fi
+
+rate=$(echo "$response" | jq -r ".\"${FROM_CURRENCY}\".\"${TO_CURRENCY}\"")
+
+if [[ "$rate" == "null" ]]; then
+    echo "Error: Currency pair $1/$2 not supported" >&2
+    exit 1
+fi
+
+result=$(echo "$AMOUNT * $rate" | bc -l)
+
+if (( $(echo "$result >= 1" | bc -l) )); then
+    printf "%.2f\n" "$result"
+else
+    printf "%.10f\n" "$result" | sed 's/0*$//' | sed 's/\.$//'
+fi
